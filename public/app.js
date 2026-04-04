@@ -794,23 +794,26 @@ async function reRenderSnap() {
 }
 
 function pickSnapDate() {
-  const input = document.createElement('input');
-  input.type = 'date';
-  input.value = snapDate;
-  input.max = todayStr();
-  input.style.position = 'fixed'; input.style.opacity = '0'; input.style.top = '0';
-  document.body.appendChild(input);
-  input.addEventListener('change', async () => {
-    snapDate = input.value;
-    document.body.removeChild(input);
-    const cats = await getAllCategories();
-    const latestVals = await getLatestValues();
-    // 只加载新日期已有的数据，新日期则为空（用户需手动添加类别）
-    const dateSnaps = await getSnapshotsByDate(snapDate);
-    const dateVals = Object.fromEntries(dateSnaps.map(s => [s.categoryId, s.value]));
-    renderSnapshotModal(cats, latestVals, dateVals, snapDate);
-  });
-  input.showPicker?.() || input.click();
+  showDialog(`
+    <h3>选择日期</h3>
+    <input type="date" id="snap-date-picker" value="${snapDate}" max="${todayStr()}" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:18px;outline:none;background:var(--input-bg);text-align:center">
+    <div class="dialog-actions" style="margin-top:20px">
+      <button class="cancel" onclick="this.closest('.dialog-overlay').remove()">取消</button>
+      <button class="confirm" onclick="confirmSnapDate(this)">确定</button>
+    </div>`);
+}
+
+async function confirmSnapDate(btn) {
+  const overlay = btn.closest('.dialog-overlay');
+  const picked = overlay.querySelector('#snap-date-picker').value;
+  overlay.remove();
+  if (!picked) return;
+  snapDate = picked;
+  const cats = await getAllCategories();
+  const latestVals = await getLatestValues();
+  const dateSnaps = await getSnapshotsByDate(snapDate);
+  const dateVals = Object.fromEntries(dateSnaps.map(s => [s.categoryId, s.value]));
+  renderSnapshotModal(cats, latestVals, dateVals, snapDate);
 }
 
 function removeSnapRow(btn) {
