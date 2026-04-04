@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0A1628">
+  <title>积账</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAXRJREFUWEft1r1OAkEQB/D/LhYWJhYmVia2Jr6Aj+ATeB8TC2MTK0sTOwsfwcZHsLKhMjZWGm/nMrfsHYesO5cz2ey3M/OfnVkCx0Oc7x8DYMRnGN5BbgDcAngemcHuNwBcOE6AAYAO/8BwF0qgDEAFgFMp68BcCcVwNgqgP0AAMs7AKb/AcAvqQAwBsAygP2dOuDyPwBMpQL4EsDhTh3wewBc/AcA16kARgBYAHCcCgBjACwBOPgPAB5TAWAEgAUAJ/8BwEMqgOE6gGmflqcCKPwzINNbAdwBONqpAy53AJz/BwCPqQAwAsA8gJP/AOApFcAYAHMAzlIBjAEwC+DsPwB4TgUwBsAMgItUAGMAzAC4TAUwBkAvgOtUAGMA9AC4TQUwBkA3gPtUAKO1AJN+HU8FUPjfgHRvBfBwpw74vAPg8j8AeE4FMALAPIDbVABjAMwBuE8F8DWAw1SAWQeAvxlQeAYYAbD4XwE8pQIY/U9hVKjP5KMYQAAAAABJRU5ErkJggg==">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <!-- Toast 通知 -->
+  <div id="toast" class="toast"></div>
+
+  <!-- 主容器 -->
+  <div id="app">
+    <!-- 页面内容区 -->
+    <div id="page-container"></div>
+
+    <!-- 底部导航栏 -->
+    <nav id="bottom-nav">
+      <div class="nav-item active" data-page="home" onclick="navigateTo('home')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+        <span>首页</span>
+      </div>
+      <div class="nav-item" data-page="table" onclick="navigateTo('table')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/></svg>
+        <span>表格</span>
+      </div>
+      <div class="nav-item" data-page="charts" onclick="navigateTo('charts')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>
+        <span>图表</span>
+      </div>
+      <div class="nav-item" data-page="report" onclick="navigateTo('report')">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        <span>报告</span>
+      </div>
+    </nav>
+  </div>
+
+  <!-- 模态页面容器 -->
+  <div id="modal-container" class="modal-container hidden"></div>
+
+  <!-- FAB 按钮 -->
+  <button id="fab" class="fab" onclick="openAddSnapshot()">
+    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+    <span>记录</span>
+  </button>
+
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
