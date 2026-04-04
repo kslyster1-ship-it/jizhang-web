@@ -748,10 +748,11 @@ function renderSnapshotModal(cats, latestVals, dateVals, editDate) {
       <h2>${editDate ? '编辑记录' : '新增记录'}</h2>
       <button class="action-btn" onclick="closeModal();openCategoryManage()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg></button>
     </div>
-    <div class="date-selector" onclick="pickSnapDate()">
+    <div class="date-selector" style="position:relative;overflow:hidden">
       <div class="date-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg></div>
       <div class="date-text">${fmtDateFull(snapDate)}</div>
       <div class="date-chevron"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></div>
+      <input type="date" id="snap-date-native" value="${snapDate}" max="${todayStr()}" onchange="onSnapDateChange(this.value)" style="position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:16px">
     </div>
     <div class="type-toggle">
       <div class="type-chip ${snapShowAssets?'active':''}" onclick="snapShowAssets=true;reRenderSnap()">
@@ -793,33 +794,7 @@ async function reRenderSnap() {
   renderSnapshotModal(cats, await getLatestValues(), dateVals);
 }
 
-function pickSnapDate() {
-  const overlay = showDialog(`
-    <h3>选择日期</h3>
-    <input type="date" id="snap-date-picker" value="${snapDate}" max="${todayStr()}" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:18px;outline:none;background:var(--input-bg);text-align:center" onclick="openSnapDateCalendar(event)" onfocus="openSnapDateCalendar(event)">
-    <div class="dialog-actions" style="margin-top:20px">
-      <button class="cancel" onclick="this.closest('.dialog-overlay').remove()">取消</button>
-      <button class="confirm" onclick="confirmSnapDate(this)">确定</button>
-    </div>`);
-  const picker = overlay.querySelector('#snap-date-picker');
-  requestAnimationFrame(() => {
-    if (picker) {
-      picker.click();
-      openSnapDateCalendar({ currentTarget: picker });
-    }
-  });
-}
-
-function openSnapDateCalendar(event) {
-  const picker = event?.currentTarget || event?.target;
-  if (!picker) return;
-  picker.showPicker?.();
-}
-
-async function confirmSnapDate(btn) {
-  const overlay = btn.closest('.dialog-overlay');
-  const picked = overlay.querySelector('#snap-date-picker').value;
-  overlay.remove();
+async function onSnapDateChange(picked) {
   if (!picked) return;
   snapDate = picked;
   const cats = await getAllCategories();
