@@ -796,16 +796,24 @@ async function reRenderSnap() {
 function pickSnapDate() {
   const overlay = showDialog(`
     <h3>选择日期</h3>
-    <input type="date" id="snap-date-picker" value="${snapDate}" max="${todayStr()}" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:18px;outline:none;background:var(--input-bg);text-align:center">
+    <input type="date" id="snap-date-picker" value="${snapDate}" max="${todayStr()}" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:18px;outline:none;background:var(--input-bg);text-align:center" onclick="openSnapDateCalendar(event)" onfocus="openSnapDateCalendar(event)">
     <div class="dialog-actions" style="margin-top:20px">
       <button class="cancel" onclick="this.closest('.dialog-overlay').remove()">取消</button>
       <button class="confirm" onclick="confirmSnapDate(this)">确定</button>
     </div>`);
-  // 自动打开日历
-  setTimeout(() => {
-    const picker = document.getElementById('snap-date-picker');
-    if (picker) { picker.showPicker?.() || picker.focus(); }
-  }, 100);
+  const picker = overlay.querySelector('#snap-date-picker');
+  requestAnimationFrame(() => {
+    if (picker) {
+      picker.click();
+      openSnapDateCalendar({ currentTarget: picker });
+    }
+  });
+}
+
+function openSnapDateCalendar(event) {
+  const picker = event?.currentTarget || event?.target;
+  if (!picker) return;
+  picker.showPicker?.();
 }
 
 async function confirmSnapDate(btn) {
