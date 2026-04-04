@@ -224,12 +224,21 @@ async function renderTablePage(container) {
 
   if (dates.length === 0) {
     container.innerHTML = `
-      <div class="table-actions"><h2>数据管理</h2></div>
+      <div class="table-actions">
+        <h2>数据管理</h2>
+        <div class="btns">
+          <button class="icon-btn" onclick="handleImport()" title="导入" style="background:rgba(46,204,113,0.1)"><svg viewBox="0 0 24 24" fill="var(--positive)"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button>
+          <button class="icon-btn" onclick="handleExport()" title="导出"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg></button>
+        </div>
+      </div>
       <div class="empty-state">
         <div class="empty-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/></svg></div>
         <div class="empty-title">暂无数据</div>
-        <div class="empty-subtitle">添加记录后这里会显示数据</div>
-        <button class="btn-primary" style="width:auto;padding:15px 40px" onclick="openAddSnapshot()">新增记录</button>
+        <div class="empty-subtitle">可以导入CSV数据，或新增记录</div>
+        <div style="display:flex;gap:12px">
+          <button class="btn-outline" style="padding:12px 24px" onclick="handleImport()">导入数据</button>
+          <button class="btn-primary" style="width:auto;padding:12px 24px" onclick="openAddSnapshot()">新增记录</button>
+        </div>
       </div>`;
     return;
   }
