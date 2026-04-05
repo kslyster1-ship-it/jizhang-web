@@ -385,7 +385,14 @@ async function renderChartsPage(container) {
   await renderChartContent();
 }
 
-function switchChartTab(tab) { chartTab = tab; destroyCharts(); renderChartContent(); }
+function switchChartTab(tab) {
+  chartTab = tab;
+  document.querySelectorAll('.chart-tab').forEach((el, i) => {
+    el.classList.toggle('active', i === tab);
+  });
+  destroyCharts();
+  renderChartContent();
+}
 
 async function renderChartContent() {
   const cc = document.getElementById('chart-content');
