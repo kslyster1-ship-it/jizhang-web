@@ -710,8 +710,43 @@ async function doDeleteHomeDate(dateStr, btn) {
   renderHomePage(document.getElementById('page-container'));
 }
 
-function shareReport() {
-  showToast('网页版暂不支持截图分享，请使用App版本', 'info');
+async function shareReport() {
+  const el = document.getElementById('report-capture');
+  if (!el) { showToast('报告区域未找到', 'error'); return; }
+  showToast('正在生成图片…', 'info', 2000);
+  try {
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      logging: false
+    });
+    const dataUrl = canvas.toDataURL('image/png');
+
+    // 尝试使用 Web Share API（手机端支持好）
+    if (navigator.share && navigator.canShare) {
+      try {
+        const blob = await (await fetch(dataUrl)).blob();
+        const file = new File([blob], '积账报告.png', { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: '积账 - 资产报告' });
+          return;
+        }
+      } catch (e) {
+        // share 被取消或不支持，继续用下载方式
+        if (e.name === 'AbortError') return;
+      }
+    }
+
+    // 回退：直接下载图片
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = '积账报告.png';
+    a.click();
+    showToast('报告图片已保存', 'success');
+  } catch (e) {
+    showToast('生成图片失败: ' + e.message, 'error');
+  }
 }
 
 // ═══════════════════════════════════════════
