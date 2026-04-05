@@ -408,6 +408,18 @@ async function renderTrendChart(cc) {
   const startDate = getStartDate(chartTimeRange);
   const trend = await getTotalTrend(startDate);
 
+  // 计算环比数据
+  const qoqData = trend.map((p, i) => {
+    if (i === 0) return { change: 0, pct: 0 };
+    const prev = trend[i - 1].value;
+    const change = p.value - prev;
+    const pct = prev !== 0 ? (change / Math.abs(prev)) * 100 : 0;
+    return { change, pct };
+  });
+
+  // 最新一期的环比
+  const latestQoq = trend.length >= 2 ? qoqData[trend.length - 1] : null;
+
   cc.innerHTML = `
     ${buildTimeRangeHtml()}
     <div class="chart-area">
@@ -418,9 +430,29 @@ async function renderTrendChart(cc) {
           ${fmtChange(trend[trend.length-1].value - trend[0].value)}
         </span>
       </div>
+      ${latestQoq ? `<div style="padding-bottom:10px;font-size:13px;color:var(--text-secondary)">
+        环比: <span style="font-weight:600;color:${latestQoq.change >= 0 ? 'var(--positive)' : 'var(--negative)'}">${fmtChange(latestQoq.change)}</span>
+        <span style="font-weight:600;color:${latestQoq.pct >= 0 ? 'var(--positive)' : 'var(--negative)'}">(${latestQoq.pct >= 0 ? '+' : ''}${latestQoq.pct.toFixed(2)}%)</span>
+      </div>` : ''}
       <div class="chart-canvas-wrap"><canvas id="trend-canvas"></canvas></div>
       `}
     </div>
+    ${trend.length >= 2 ? `<div style="padding:12px 16px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:8px;color:var(--primary)">环比变化</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${trend.slice(1).reverse().map((p, ri) => {
+          const i = trend.length - 1 - ri;
+          const q = qoqData[i];
+          const isUp = q.change >= 0;
+          return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:${isUp ? 'rgba(46,204,113,0.06)' : 'rgba(231,76,60,0.06)'};border-radius:8px">
+            <span style="font-size:12px;color:var(--text-tertiary);min-width:65px">${fmtDateShort(p.date)}</span>
+            <span style="font-size:13px;font-weight:600;color:${isUp ? 'var(--positive)' : 'var(--negative)'};min-width:80px">${fmtChange(q.change)}</span>
+            <span style="font-size:12px;font-weight:600;color:${isUp ? 'var(--positive)' : 'var(--negative)'}">${isUp ? '↑' : '↓'}${Math.abs(q.pct).toFixed(2)}%</span>
+            <span style="font-size:12px;color:var(--text-tertiary);margin-left:auto">${fmtCurrency(p.value)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
     <div id="trend-detail"></div>`;
 
   if (trend.length >= 2) {
@@ -445,7 +477,18 @@ async function renderTrendChart(cc) {
             }
           }
         },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { title: ctx => { const i = ctx[0].dataIndex; return fmtDate(trend[i].date); }, label: ctx => fmtCurrency(ctx.parsed.y) } } },
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: {
+            title: ctx => { const i = ctx[0].dataIndex; return fmtDate(trend[i].date); },
+            label: ctx => fmtCurrency(ctx.parsed.y),
+            afterLabel: ctx => {
+              const i = ctx.dataIndex;
+              if (i === 0) return '';
+              const q = qoqData[i];
+              return `环比: ${fmtChange(q.change)} (${q.pct >= 0 ? '+' : ''}${q.pct.toFixed(2)}%)`;
+            }
+          }
+        }},
         scales: { x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9CA3AF', maxTicksLimit: 6 } }, y: { grid: { color: '#E5E7EB' }, ticks: { font: { size: 10 }, color: '#9CA3AF', callback: v => fmtLargeAmount(v) } } }
       }
     });
@@ -1194,21 +1237,28 @@ function renderAuthPage() {
       <p style="color:rgba(255,255,255,0.5);font-size:14px;margin-top:6px">记录资产变化，积少成多</p>
     </div>`;
 
+  const isReset = authMode === 'reset';
+
+  const toggleHtml = isReset ? '' : `
+    <div style="display:flex;background:var(--input-bg);border-radius:12px;padding:3px;margin-bottom:20px">
+      <button onclick="authMode='login';renderAuthPage()" style="flex:1;padding:10px 0;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.25s;${authMode === 'login' ? 'background:var(--primary);color:white;box-shadow:0 2px 8px rgba(10,22,40,0.15)' : 'background:transparent;color:var(--text-tertiary)'}">登录</button>
+      <button onclick="authMode='register';renderAuthPage()" style="flex:1;padding:10px 0;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.25s;${authMode === 'register' ? 'background:var(--primary);color:white;box-shadow:0 2px 8px rgba(10,22,40,0.15)' : 'background:transparent;color:var(--text-tertiary)'}">注册</button>
+    </div>`;
+
   let formHtml = '';
 
   if (authMode === 'login') {
     formHtml = `
-      <h2 style="font-size:18px;font-weight:700;margin-bottom:20px">登录</h2>
+      ${toggleHtml}
       <input type="email" id="auth-email" placeholder="邮箱地址" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg);margin-bottom:12px">
       <input type="password" id="auth-password" placeholder="密码" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg)">
       <button class="btn-primary mt-16" id="auth-submit" onclick="handleLogin()">登录</button>
-      <div style="display:flex;justify-content:space-between;margin-top:16px">
-        <button style="color:var(--primary);font-size:13px;font-weight:500;background:none;border:none;cursor:pointer" onclick="authMode='register';renderAuthPage()">注册新账号</button>
+      <div style="text-align:right;margin-top:12px">
         <button style="color:var(--text-tertiary);font-size:13px;background:none;border:none;cursor:pointer" onclick="authMode='reset';renderAuthPage()">忘记密码？</button>
       </div>`;
   } else if (authMode === 'register') {
     formHtml = `
-      <h2 style="font-size:18px;font-weight:700;margin-bottom:20px">注册</h2>
+      ${toggleHtml}
       <input type="email" id="auth-email" placeholder="邮箱地址" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg);margin-bottom:12px">
       <div style="display:flex;gap:10px;margin-bottom:12px">
         <input type="text" id="auth-code" placeholder="验证码" maxlength="6" inputmode="numeric" style="flex:1;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg)">
@@ -1216,13 +1266,15 @@ function renderAuthPage() {
       </div>
       <input type="password" id="auth-password" placeholder="设置密码（至少6位）" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg);margin-bottom:12px">
       <input type="password" id="auth-password2" placeholder="确认密码" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg)">
-      <button class="btn-primary mt-16" id="auth-submit" onclick="handleRegister()">注册</button>
-      <div style="text-align:center;margin-top:16px">
-        <button style="color:var(--primary);font-size:13px;font-weight:500;background:none;border:none;cursor:pointer" onclick="authMode='login';renderAuthPage()">← 已有账号，去登录</button>
-      </div>`;
+      <button class="btn-primary mt-16" id="auth-submit" onclick="handleRegister()">注册</button>`;
   } else {
     formHtml = `
-      <h2 style="font-size:18px;font-weight:700;margin-bottom:20px">找回密码</h2>
+      <div style="display:flex;align-items:center;margin-bottom:20px">
+        <button style="background:none;border:none;cursor:pointer;padding:4px;margin-right:8px" onclick="authMode='login';renderAuthPage()">
+          <svg viewBox="0 0 24 24" fill="var(--primary)" width="20" height="20"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        </button>
+        <h2 style="font-size:18px;font-weight:700;margin:0">找回密码</h2>
+      </div>
       <input type="email" id="auth-email" placeholder="注册时的邮箱" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg);margin-bottom:12px">
       <div style="display:flex;gap:10px;margin-bottom:12px">
         <input type="text" id="auth-code" placeholder="验证码" maxlength="6" inputmode="numeric" style="flex:1;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg)">
@@ -1230,10 +1282,7 @@ function renderAuthPage() {
       </div>
       <input type="password" id="auth-password" placeholder="新密码（至少6位）" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg);margin-bottom:12px">
       <input type="password" id="auth-password2" placeholder="确认新密码" style="width:100%;padding:14px 16px;border:1px solid var(--border-light);border-radius:14px;font-size:15px;outline:none;background:var(--input-bg)">
-      <button class="btn-primary mt-16" id="auth-submit" onclick="handleResetPassword()">重置密码</button>
-      <div style="text-align:center;margin-top:16px">
-        <button style="color:var(--primary);font-size:13px;font-weight:500;background:none;border:none;cursor:pointer" onclick="authMode='login';renderAuthPage()">← 返回登录</button>
-      </div>`;
+      <button class="btn-primary mt-16" id="auth-submit" onclick="handleResetPassword()">重置密码</button>`;
   }
 
   container.innerHTML = `
