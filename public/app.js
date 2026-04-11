@@ -7,6 +7,26 @@ let currentPage = 'home';
 let chartInstances = {};
 let homeSelectedDate = null; // 首页资产明细选中的日期
 let tableSelectedDate = null; // 数据管理页选中的日期
+let availableBooks = [];
+let activeBook = null;
+
+function setPendingInviteToken(token) {
+  if (!token) localStorage.removeItem('jizhang_pending_invite_token');
+  else localStorage.setItem('jizhang_pending_invite_token', token);
+}
+
+function getPendingInviteToken() {
+  return localStorage.getItem('jizhang_pending_invite_token');
+}
+
+function captureInviteTokenFromUrl() {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get('inviteToken');
+  if (!token) return;
+  setPendingInviteToken(token);
+  url.searchParams.delete('inviteToken');
+  history.replaceState({}, '', url.pathname + (url.search ? `?${url.searchParams.toString()}` : '') + url.hash);
+}
 
 // ═══════════════════════════════════════════
 //  格式化工具
@@ -35,6 +55,74 @@ function showToast(msg, type = 'info', duration = 3000) {
   setTimeout(() => t.className = 'toast', duration);
 }
 
+function getBookName() {
+  return activeBook?.name || '个人账本';
+}
+
+async function refreshBookState() {
+  const books = await getBooks();
+  availableBooks = books || [];
+  const activeId = getActiveBookId();
+  if (activeId) {
+    activeBook = availableBooks.find(b => b.id === activeId) || null;
+  }
+  if (!activeBook && availableBooks.length > 0) {
+    activeBook = availableBooks.find(b => b.type === 'personal') || availableBooks[0];
+    setActiveBookId(activeBook.id);
+  }
+}
+
+async function processPendingInviteToken() {
+  const token = getPendingInviteToken();
+  if (!token) return;
+  try {
+    const invite = await getInvitationByToken(token);
+    if (invite.status !== 'pending') {
+      setPendingInviteToken(null);
+      return;
+    }
+    showDialog(`
+      <h3>家庭账本邀请</h3>
+      <p style="color:var(--text-secondary);font-size:14px;line-height:1.7">
+        <b>${invite.inviter_email}</b> 邀请你加入家庭账本：<br>
+        <b>${invite.book_name}</b>
+      </p>
+      <div class="dialog-actions">
+        <button class="cancel" onclick="respondPendingInviteToken('reject', this)">拒绝</button>
+        <button class="confirm" onclick="respondPendingInviteToken('accept', this)">接受</button>
+      </div>
+    `);
+  } catch (e) {
+    setPendingInviteToken(null);
+    showToast(e.message, 'error');
+  }
+}
+
+async function respondPendingInviteToken(action, btn) {
+  const token = getPendingInviteToken();
+  if (!token) return;
+  btn.disabled = true;
+  try {
+    const result = await respondInvitationByToken(token, action);
+    setPendingInviteToken(null);
+    btn.closest('.dialog-overlay')?.remove();
+    await refreshBookState();
+    if (action === 'accept') {
+      setActiveBookId(result.invite.book_id);
+      await refreshBookState();
+      showToast(`已加入 ${result.invite.book_name}`, 'success');
+    } else {
+      showToast('已拒绝邀请', 'info');
+    }
+    homeSelectedDate = null;
+    tableSelectedDate = null;
+    renderPage(currentPage);
+  } catch (e) {
+    showToast(e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
 // ═══════════════════════════════════════════
 //  Navigation
 // ═══════════════════════════════════════════
@@ -55,6 +143,9 @@ function destroyCharts() {
 }
 
 async function renderPage(page) {
+  if (isLoggedIn()) {
+    try { await refreshBookState(); } catch {}
+  }
   const container = document.getElementById('page-container');
   container.scrollTop = 0;
   switch (page) {
@@ -124,6 +215,7 @@ async function renderHomePage(container) {
       <div class="hero-topbar">
         <h1>积账</h1>
         <div class="hero-topbar-actions">
+          <button onclick="openBookManage()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h10v2H4zm0 5h16v2H4z"/></svg>${getBookName()}</button>
           <button onclick="openFeedback()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg></button>
           <button onclick="openCategoryManage()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>管理</button>
           <button onclick="handleLogout()" style="opacity:0.6"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg></button>
@@ -851,7 +943,7 @@ function renderSnapshotModal(cats, latestVals, dateVals, editDate) {
       ${inputRows}
       <button class="add-cat-btn" onclick="selectExistingCategory()">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        添加类别
+        添加条目
       </button>
     </div>
     <div class="bottom-bar" id="snap-bottom">
@@ -1115,6 +1207,156 @@ async function doDeleteCategory(id, btn) {
 }
 
 // ═══════════════════════════════════════════
+//  BOOK MANAGEMENT
+// ═══════════════════════════════════════════
+async function openBookManage() {
+  await refreshBookState();
+  const currentId = activeBook?.id;
+  const rows = availableBooks.map(b => `
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 2px;border-bottom:1px solid #f0f1f3">
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:600">${b.name}</div>
+        <div style="font-size:12px;color:var(--text-tertiary)">${b.type === 'family' ? '家庭账本' : '个人账本'}</div>
+      </div>
+      ${currentId === b.id ? '<span style="font-size:12px;color:var(--positive);font-weight:600">当前</span>' : `<button class="btn-outline" style="width:auto;padding:8px 12px;font-size:12px" onclick="switchBook(${b.id}, this)">切换</button>`}
+      ${b.type === 'family' ? `<button class="btn-outline" style="width:auto;padding:8px 12px;font-size:12px" onclick="openInviteMemberDialog(${b.id})">邀请</button>` : ''}
+    </div>
+  `).join('');
+
+  openModal(`
+    <div class="modal-header">
+      <button class="back-btn" onclick="closeModal()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
+      <h2>账本管理</h2>
+    </div>
+    <div class="content-pad" style="padding-top:12px">
+      <div class="card" style="padding:14px 16px;margin-bottom:12px">
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:8px">当前账本</div>
+        <div style="font-size:18px;font-weight:700">${getBookName()}</div>
+      </div>
+      <div class="card" style="padding:10px 16px">${rows}</div>
+      <button class="btn-primary mt-16" onclick="openCreateFamilyBookDialog()">创建家庭账本</button>
+      <button class="btn-outline mt-10" onclick="openPendingInvitationsDialog()">查看收到的邀请</button>
+    </div>
+  `);
+}
+
+async function switchBook(bookId, btn) {
+  if (btn) btn.disabled = true;
+  setActiveBookId(bookId);
+  await refreshBookState();
+  homeSelectedDate = null;
+  tableSelectedDate = null;
+  destroyCharts();
+  closeModal();
+  showToast(`已切换到 ${getBookName()}`, 'success');
+  renderPage(currentPage);
+}
+
+function openCreateFamilyBookDialog() {
+  showDialog(`
+    <h3>创建家庭账本</h3>
+    <input type="text" id="family-book-name" placeholder="例如：我们的小家账本" autofocus>
+    <div class="dialog-actions">
+      <button class="cancel" onclick="this.closest('.dialog-overlay').remove()">取消</button>
+      <button class="confirm" onclick="doCreateFamilyBook(this)">创建</button>
+    </div>
+  `);
+}
+
+async function doCreateFamilyBook(btn) {
+  const overlay = btn.closest('.dialog-overlay');
+  const name = overlay.querySelector('#family-book-name').value.trim() || '家庭账本';
+  btn.disabled = true;
+  try {
+    const created = await createFamilyBook(name);
+    overlay.remove();
+    setActiveBookId(created.id);
+    await refreshBookState();
+    closeModal();
+    showToast('家庭账本创建成功', 'success');
+    renderPage(currentPage);
+  } catch (e) {
+    showToast(e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
+function openInviteMemberDialog(bookId) {
+  showDialog(`
+    <h3>邀请家庭成员</h3>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6">输入对方注册本应用的邮箱，对方接受后即可共享记账数据。</p>
+    <input type="email" id="invite-email" placeholder="ta@example.com" autofocus>
+    <div class="dialog-actions">
+      <button class="cancel" onclick="this.closest('.dialog-overlay').remove()">取消</button>
+      <button class="confirm" onclick="doInviteMember(${bookId}, this)">发送邀请</button>
+    </div>
+  `);
+}
+
+async function doInviteMember(bookId, btn) {
+  const overlay = btn.closest('.dialog-overlay');
+  const email = overlay.querySelector('#invite-email').value.trim();
+  if (!email || !email.includes('@')) {
+    showToast('请输入有效邮箱', 'error');
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await inviteFamilyMember(bookId, email);
+    overlay.remove();
+    showToast('邀请已发送', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
+async function openPendingInvitationsDialog() {
+  const invites = await getPendingInvitations();
+  if (invites.length === 0) {
+    showDialog(`
+      <h3>收到的邀请</h3>
+      <p style="font-size:14px;color:var(--text-secondary)">暂无待处理邀请</p>
+      <div class="dialog-actions"><button class="cancel" onclick="this.closest('.dialog-overlay').remove()">关闭</button></div>
+    `);
+    return;
+  }
+
+  const items = invites.map(inv => `
+    <div style="padding:12px 2px;border-bottom:1px solid #f0f1f3">
+      <div style="font-size:15px;font-weight:600">${inv.book_name}</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin:4px 0 8px">邀请人：${inv.inviter_email}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn-outline" style="width:auto;padding:8px 12px;font-size:12px" onclick="respondBookInvitation(${inv.id},'reject',this)">拒绝</button>
+        <button class="btn-primary" style="width:auto;padding:8px 12px;font-size:12px" onclick="respondBookInvitation(${inv.id},'accept',this)">接受</button>
+      </div>
+    </div>
+  `).join('');
+
+  showDialog(`
+    <h3>收到的邀请</h3>
+    <div style="max-height:360px;overflow-y:auto">${items}</div>
+    <div class="dialog-actions"><button class="cancel" onclick="this.closest('.dialog-overlay').remove()">关闭</button></div>
+  `);
+}
+
+async function respondBookInvitation(inviteId, action, btn) {
+  btn.disabled = true;
+  try {
+    await respondInvitation(inviteId, action);
+    if (action === 'accept') showToast('已加入家庭账本', 'success');
+    else showToast('已拒绝邀请', 'info');
+    const overlay = btn.closest('.dialog-overlay');
+    if (overlay) overlay.remove();
+    await refreshBookState();
+    renderPage(currentPage);
+  } catch (e) {
+    showToast(e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════
 //  FEEDBACK PAGE
 // ═══════════════════════════════════════════
 let fbType = 0;
@@ -1304,7 +1546,7 @@ async function handleLogin() {
   try {
     await loginUser(email, password);
     showToast('登录成功！', 'success');
-    initApp();
+    await initApp();
   } catch (e) {
     showToast(e.message, 'error');
     btn.disabled = false; btn.textContent = '登录';
@@ -1347,7 +1589,7 @@ async function handleRegister() {
   try {
     await registerUser(email, code, password);
     showToast('注册成功！', 'success');
-    initApp();
+    await initApp();
   } catch (e) {
     showToast(e.message, 'error');
     btn.disabled = false; btn.textContent = '注册';
@@ -1400,16 +1642,19 @@ async function doLogout(btn) {
 // ═══════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════
-function initApp() {
+async function initApp() {
   document.getElementById('bottom-nav').style.display = '';
+  await refreshBookState();
   navigateTo('home');
+  await processPendingInviteToken();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  captureInviteTokenFromUrl();
   if (isLoggedIn()) {
     try {
       await getMe(); // 验证 token 是否有效
-      initApp();
+      await initApp();
     } catch {
       showLoginPage();
     }

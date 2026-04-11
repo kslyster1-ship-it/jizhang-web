@@ -16,6 +16,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const SMTP_EMAIL = process.env.SMTP_EMAIL || 'zhangacd@qq.com';
 const SMTP_PASS = process.env.SMTP_PASS || 'bqzaqhhoqkhgbhgi';
+const APP_BASE_URL = process.env.APP_BASE_URL || 'http://localhost:3000';
 const SECRET = process.env.SESSION_SECRET || 'jizhang_secret_' + Date.now();
 
 function ensureDir(dir) { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); }
@@ -24,6 +25,7 @@ function writeJSON(file, data) { ensureDir(path.dirname(file)); fs.writeFileSync
 
 ensureDir(DATA_DIR);
 ensureDir(path.join(DATA_DIR, 'users'));
+ensureDir(path.join(DATA_DIR, 'books'));
 
 // ═══════════════════════════════════════════
 //  邮件发送
@@ -64,12 +66,46 @@ async function sendVerificationEmail(email) {
   }
 }
 
+async function sendFamilyInviteEmail(inviteeEmail, inviterEmail, bookName, inviteToken) {
+  const inviteUrl = `${APP_BASE_URL}/?inviteToken=${encodeURIComponent(inviteToken)}`;
+  try {
+    await transporter.sendMail({
+      from: `"积账" <${SMTP_EMAIL}>`,
+      to: inviteeEmail,
+      subject: '积账 - 家庭账本邀请',
+      html: `
+        <div style="max-width:460px;margin:0 auto;padding:28px;font-family:-apple-system,sans-serif">
+          <h2 style="color:#0A1628;margin-bottom:16px">你收到了一条家庭账本邀请</h2>
+          <p style="color:#4B5563;line-height:1.8;margin:0 0 10px">邀请人：<b>${inviterEmail}</b></p>
+          <p style="color:#4B5563;line-height:1.8;margin:0 0 20px">账本名称：<b>${bookName}</b></p>
+          <a href="${inviteUrl}" style="display:inline-block;padding:12px 18px;background:#0A1628;color:#fff;border-radius:10px;text-decoration:none;font-weight:600">点击加入家庭账本</a>
+          <p style="color:#9CA3AF;font-size:12px;margin-top:18px;line-height:1.6">如果按钮无法点击，请复制链接到浏览器打开：<br>${inviteUrl}</p>
+        </div>`,
+    });
+    return true;
+  } catch (e) {
+    console.error('发送家庭邀请邮件失败:', e.message);
+    return false;
+  }
+}
+
 // ═══════════════════════════════════════════
 //  用户系统
 // ═══════════════════════════════════════════
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 function getUsers() { return readJSON(USERS_FILE, []); }
 function saveUsers(users) { writeJSON(USERS_FILE, users); }
+
+const BOOKS_FILE = path.join(DATA_DIR, 'books.json');
+const MEMBERSHIPS_FILE = path.join(DATA_DIR, 'book_memberships.json');
+const INVITATIONS_FILE = path.join(DATA_DIR, 'book_invitations.json');
+
+function getBooks() { return readJSON(BOOKS_FILE, []); }
+function saveBooks(books) { writeJSON(BOOKS_FILE, books); }
+function getMemberships() { return readJSON(MEMBERSHIPS_FILE, []); }
+function saveMemberships(rows) { writeJSON(MEMBERSHIPS_FILE, rows); }
+function getInvitations() { return readJSON(INVITATIONS_FILE, []); }
+function saveInvitations(rows) { writeJSON(INVITATIONS_FILE, rows); }
 
 const sessions = {};
 function generateToken() { return crypto.randomBytes(32).toString('hex'); }
@@ -79,6 +115,76 @@ function getUserDir(userId) {
   const dir = path.join(DATA_DIR, 'users', String(userId));
   ensureDir(dir);
   return dir;
+}
+
+function getBookDir(bookId) {
+  const dir = path.join(DATA_DIR, 'books', String(bookId));
+  ensureDir(dir);
+  return dir;
+}
+
+function ensurePersonalBook(userId, email) {
+  const books = getBooks();
+  const memberships = getMemberships();
+  let personal = books.find(b => b.type === 'personal' && b.owner_user_id === userId);
+  if (!personal) {
+    personal = {
+      id: books.length > 0 ? Math.max(...books.map(b => b.id)) + 1 : 1,
+      type: 'personal',
+      name: '个人账本',
+      owner_user_id: userId,
+      owner_email: email,
+      created_at: new Date().toISOString(),
+    };
+    books.push(personal);
+    saveBooks(books);
+  }
+  const m = memberships.find(x => x.book_id === personal.id && x.user_id === userId && x.status === 'active');
+  if (!m) {
+    memberships.push({
+      id: memberships.length > 0 ? Math.max(...memberships.map(x => x.id)) + 1 : 1,
+      book_id: personal.id,
+      user_id: userId,
+      role: 'owner',
+      status: 'active',
+      joined_at: new Date().toISOString(),
+    });
+    saveMemberships(memberships);
+  }
+  return personal;
+}
+
+function getUserBooks(userId, email) {
+  ensurePersonalBook(userId, email);
+  const books = getBooks();
+  const memberships = getMemberships().filter(m => m.user_id === userId && m.status === 'active');
+  return books
+    .filter(b => memberships.some(m => m.book_id === b.id))
+    .map(b => {
+      const mem = memberships.find(m => m.book_id === b.id);
+      return {
+        ...b,
+        role: mem?.role || 'member',
+      };
+    });
+}
+
+function getBookForRequest(req) {
+  const books = getUserBooks(req.userId, req.userEmail);
+  const picked = req.headers['x-book-id'] || req.query.bookId || req.body?.bookId;
+  const fallback = books.find(b => b.type === 'personal' && b.owner_user_id === req.userId) || books[0];
+  if (!picked) return fallback;
+  const id = parseInt(picked);
+  if (Number.isNaN(id)) return fallback;
+  return books.find(b => b.id === id) || fallback;
+}
+
+function bookMiddleware(req, res, next) {
+  const book = getBookForRequest(req);
+  if (!book) return res.status(403).json({ error: '没有可用账本' });
+  req.book = book;
+  req.dataKey = book.type === 'family' ? `family_${book.id}` : String(req.userId);
+  next();
 }
 
 // ═══════════════════════════════════════════
@@ -133,11 +239,12 @@ app.post('/api/auth/register', (req, res) => {
   users.push(user);
   saveUsers(users);
   ensureDir(getUserDir(user.id));
+  ensurePersonalBook(user.id, user.email);
 
   // 自动登录
   const token = generateToken();
   sessions[token] = { userId: user.id, email, expiresAt: Date.now() + 7 * 24 * 3600 * 1000 };
-  res.json({ ok: true, token, user: { id: user.id, email } });
+  res.json({ ok: true, token, user: { id: user.id, email }, books: getUserBooks(user.id, user.email) });
 });
 
 // 登录：邮箱 + 密码
@@ -152,7 +259,8 @@ app.post('/api/auth/login', (req, res) => {
 
   const token = generateToken();
   sessions[token] = { userId: user.id, email, expiresAt: Date.now() + 7 * 24 * 3600 * 1000 };
-  res.json({ ok: true, token, user: { id: user.id, email } });
+  ensurePersonalBook(user.id, user.email);
+  res.json({ ok: true, token, user: { id: user.id, email }, books: getUserBooks(user.id, user.email) });
 });
 
 // 重置密码：邮箱 + 验证码 + 新密码
@@ -176,13 +284,167 @@ app.post('/api/auth/reset-password', (req, res) => {
 });
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
-  res.json({ id: req.userId, email: req.userEmail });
+  res.json({ id: req.userId, email: req.userEmail, books: getUserBooks(req.userId, req.userEmail) });
 });
 
 app.post('/api/auth/logout', (req, res) => {
   const token = req.headers['x-auth-token'];
   if (token) delete sessions[token];
   res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════
+//  Book API（需要登录）
+// ═══════════════════════════════════════════
+app.get('/api/books', authMiddleware, (req, res) => {
+  res.json(getUserBooks(req.userId, req.userEmail));
+});
+
+app.post('/api/books/family', authMiddleware, (req, res) => {
+  const { name } = req.body;
+  const familyName = (name || '').trim() || '家庭账本';
+  const books = getBooks();
+  const memberships = getMemberships();
+  const id = books.length > 0 ? Math.max(...books.map(b => b.id)) + 1 : 1;
+  const now = new Date().toISOString();
+  const book = {
+    id,
+    type: 'family',
+    name: familyName,
+    owner_user_id: req.userId,
+    owner_email: req.userEmail,
+    created_at: now,
+  };
+  books.push(book);
+  memberships.push({
+    id: memberships.length > 0 ? Math.max(...memberships.map(m => m.id)) + 1 : 1,
+    book_id: id,
+    user_id: req.userId,
+    role: 'owner',
+    status: 'active',
+    joined_at: now,
+  });
+  saveBooks(books);
+  saveMemberships(memberships);
+  res.json(book);
+});
+
+app.post('/api/books/family/invite', authMiddleware, (req, res) => {
+  const { email, bookId } = req.body;
+  if (!email || !email.includes('@')) return res.status(400).json({ error: '请输入有效邮箱' });
+  const targetEmail = email.trim().toLowerCase();
+  if (targetEmail === req.userEmail.toLowerCase()) return res.status(400).json({ error: '不能邀请自己' });
+
+  const books = getUserBooks(req.userId, req.userEmail);
+  const selectedBookId = parseInt(bookId);
+  const book = books.find(b => b.id === selectedBookId);
+  if (!book || book.type !== 'family') return res.status(400).json({ error: '请选择家庭账本' });
+
+  const users = getUsers();
+  const invitee = users.find(u => u.email.toLowerCase() === targetEmail);
+  if (!invitee) return res.status(404).json({ error: '该邮箱尚未注册' });
+
+  const memberships = getMemberships();
+  const alreadyJoined = memberships.find(m => m.book_id === book.id && m.user_id === invitee.id && m.status === 'active');
+  if (alreadyJoined) return res.status(400).json({ error: '对方已在该家庭账本中' });
+
+  const invitations = getInvitations();
+  const pending = invitations.find(inv => inv.book_id === book.id && inv.invitee_email.toLowerCase() === targetEmail && inv.status === 'pending');
+  if (pending) return res.status(400).json({ error: '已发送邀请，请等待对方处理' });
+
+  const now = new Date().toISOString();
+  const inviteToken = crypto.randomBytes(24).toString('hex');
+  const invite = {
+    id: invitations.length > 0 ? Math.max(...invitations.map(i => i.id)) + 1 : 1,
+    book_id: book.id,
+    book_name: book.name,
+    inviter_user_id: req.userId,
+    inviter_email: req.userEmail,
+    invitee_email: targetEmail,
+    invite_token: inviteToken,
+    status: 'pending',
+    created_at: now,
+  };
+  invitations.push(invite);
+  saveInvitations(invitations);
+  sendFamilyInviteEmail(targetEmail, req.userEmail, book.name, inviteToken).catch(() => {});
+  res.json({ ok: true, invite });
+});
+
+app.get('/api/books/invitations', authMiddleware, (req, res) => {
+  const invitations = getInvitations().filter(inv => inv.invitee_email.toLowerCase() === req.userEmail.toLowerCase() && inv.status === 'pending');
+  res.json(invitations);
+});
+
+app.get('/api/books/invitations/token/:token', authMiddleware, (req, res) => {
+  const token = req.params.token;
+  const invitations = getInvitations();
+  const invite = invitations.find(i => i.invite_token === token);
+  if (!invite) return res.status(404).json({ error: '邀请不存在或已失效' });
+  if (invite.invitee_email.toLowerCase() !== req.userEmail.toLowerCase()) return res.status(403).json({ error: '该邀请不属于当前账号' });
+  res.json({
+    id: invite.id,
+    book_id: invite.book_id,
+    book_name: invite.book_name,
+    inviter_email: invite.inviter_email,
+    invitee_email: invite.invitee_email,
+    status: invite.status,
+    created_at: invite.created_at,
+    responded_at: invite.responded_at,
+  });
+});
+
+function applyInvitationAction(invite, action, userId) {
+  invite.status = action === 'accept' ? 'accepted' : 'rejected';
+  invite.responded_at = new Date().toISOString();
+
+  if (action === 'accept') {
+    const memberships = getMemberships();
+    const exists = memberships.find(m => m.book_id === invite.book_id && m.user_id === userId && m.status === 'active');
+    if (!exists) {
+      memberships.push({
+        id: memberships.length > 0 ? Math.max(...memberships.map(m => m.id)) + 1 : 1,
+        book_id: invite.book_id,
+        user_id: userId,
+        role: 'member',
+        status: 'active',
+        joined_at: new Date().toISOString(),
+      });
+      saveMemberships(memberships);
+    }
+  }
+}
+
+app.post('/api/books/invitations/:id/respond', authMiddleware, (req, res) => {
+  const id = parseInt(req.params.id);
+  const { action } = req.body;
+  if (!['accept', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
+
+  const invitations = getInvitations();
+  const invite = invitations.find(i => i.id === id);
+  if (!invite) return res.status(404).json({ error: '邀请不存在' });
+  if (invite.invitee_email.toLowerCase() !== req.userEmail.toLowerCase()) return res.status(403).json({ error: '无权操作此邀请' });
+  if (invite.status !== 'pending') return res.status(400).json({ error: '邀请已处理' });
+
+  applyInvitationAction(invite, action, req.userId);
+  saveInvitations(invitations);
+  res.json({ ok: true, invite });
+});
+
+app.post('/api/books/invitations/token/respond', authMiddleware, (req, res) => {
+  const { token, action } = req.body;
+  if (!token) return res.status(400).json({ error: '缺少邀请标识' });
+  if (!['accept', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
+
+  const invitations = getInvitations();
+  const invite = invitations.find(i => i.invite_token === token);
+  if (!invite) return res.status(404).json({ error: '邀请不存在或已失效' });
+  if (invite.invitee_email.toLowerCase() !== req.userEmail.toLowerCase()) return res.status(403).json({ error: '该邀请不属于当前账号' });
+  if (invite.status !== 'pending') return res.status(400).json({ error: '邀请已处理' });
+
+  applyInvitationAction(invite, action, req.userId);
+  saveInvitations(invitations);
+  res.json({ ok: true, invite });
 });
 
 // ═══════════════════════════════════════════
@@ -198,51 +460,51 @@ function getNextId(arr) { return arr.length > 0 ? Math.max(...arr.map(x => x.id)
 // ═══════════════════════════════════════════
 //  Category API（需要登录）
 // ═══════════════════════════════════════════
-app.get('/api/categories', authMiddleware, (req, res) => {
-  const cats = getUserCategories(req.userId).filter(c => !c.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+app.get('/api/categories', authMiddleware, bookMiddleware, (req, res) => {
+  const cats = getUserCategories(req.dataKey).filter(c => !c.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   res.json(cats);
 });
 
-app.post('/api/categories', authMiddleware, (req, res) => {
+app.post('/api/categories', authMiddleware, bookMiddleware, (req, res) => {
   const { name, is_liability = false, color_value = '#2196F3', sort_order = 0 } = req.body;
-  const cats = getUserCategories(req.userId);
+  const cats = getUserCategories(req.dataKey);
   const cat = { id: getNextId(cats), name, is_liability, color_value, sort_order, is_deleted: false, created_at: new Date().toISOString() };
   cats.push(cat);
-  saveUserCategories(req.userId, cats);
+  saveUserCategories(req.dataKey, cats);
   res.json(cat);
 });
 
-app.put('/api/categories/reorder', authMiddleware, (req, res) => {
+app.put('/api/categories/reorder', authMiddleware, bookMiddleware, (req, res) => {
   const { ids } = req.body;
-  const cats = getUserCategories(req.userId);
+  const cats = getUserCategories(req.dataKey);
   ids.forEach((id, i) => { const cat = cats.find(c => c.id === id); if (cat) cat.sort_order = i; });
-  saveUserCategories(req.userId, cats);
+  saveUserCategories(req.dataKey, cats);
   res.json({ ok: true });
 });
 
-app.put('/api/categories/:id', authMiddleware, (req, res) => {
+app.put('/api/categories/:id', authMiddleware, bookMiddleware, (req, res) => {
   const id = parseInt(req.params.id);
   const { name, is_liability, color_value } = req.body;
-  const cats = getUserCategories(req.userId);
+  const cats = getUserCategories(req.dataKey);
   const cat = cats.find(c => c.id === id);
   if (!cat) return res.status(404).json({ error: '类别不存在' });
   if (name !== undefined) cat.name = name;
   if (is_liability !== undefined) cat.is_liability = is_liability;
   if (color_value !== undefined) cat.color_value = color_value;
-  saveUserCategories(req.userId, cats);
+  saveUserCategories(req.dataKey, cats);
   res.json(cat);
 });
 
-app.delete('/api/categories/:id', authMiddleware, (req, res) => {
+app.delete('/api/categories/:id', authMiddleware, bookMiddleware, (req, res) => {
   const id = parseInt(req.params.id);
-  const cats = getUserCategories(req.userId);
+  const cats = getUserCategories(req.dataKey);
   const cat = cats.find(c => c.id === id);
-  if (cat) { cat.is_deleted = true; saveUserCategories(req.userId, cats); }
+  if (cat) { cat.is_deleted = true; saveUserCategories(req.dataKey, cats); }
   res.json({ ok: true });
 });
 
-app.get('/api/categories/next-order', authMiddleware, (req, res) => {
-  const cats = getUserCategories(req.userId);
+app.get('/api/categories/next-order', authMiddleware, bookMiddleware, (req, res) => {
+  const cats = getUserCategories(req.dataKey);
   const max = cats.length > 0 ? Math.max(...cats.map(c => c.sort_order || 0)) : -1;
   res.json({ next: max + 1 });
 });
@@ -250,45 +512,45 @@ app.get('/api/categories/next-order', authMiddleware, (req, res) => {
 // ═══════════════════════════════════════════
 //  Snapshot API（需要登录）
 // ═══════════════════════════════════════════
-app.get('/api/snapshots', authMiddleware, (req, res) => {
-  res.json(getUserSnapshots(req.userId).sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date)));
+app.get('/api/snapshots', authMiddleware, bookMiddleware, (req, res) => {
+  res.json(getUserSnapshots(req.dataKey).sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date)));
 });
 
-app.get('/api/snapshots/by-date', authMiddleware, (req, res) => {
+app.get('/api/snapshots/by-date', authMiddleware, bookMiddleware, (req, res) => {
   const { date } = req.query;
-  res.json(getUserSnapshots(req.userId).filter(s => s.snapshot_date === date));
+  res.json(getUserSnapshots(req.dataKey).filter(s => s.snapshot_date === date));
 });
 
-app.post('/api/snapshots', authMiddleware, (req, res) => {
+app.post('/api/snapshots', authMiddleware, bookMiddleware, (req, res) => {
   const { date, values } = req.body;
-  const snaps = getUserSnapshots(req.userId);
+  const snaps = getUserSnapshots(req.dataKey);
   for (const [catId, value] of Object.entries(values)) {
     const cid = parseInt(catId);
     const existing = snaps.find(s => s.category_id === cid && s.snapshot_date === date);
     if (existing) { existing.value = value; }
     else { snaps.push({ id: getNextId(snaps), category_id: cid, snapshot_date: date, value }); }
   }
-  saveUserSnapshots(req.userId, snaps);
+  saveUserSnapshots(req.dataKey, snaps);
   res.json({ ok: true });
 });
 
-app.delete('/api/snapshots', authMiddleware, (req, res) => {
+app.delete('/api/snapshots', authMiddleware, bookMiddleware, (req, res) => {
   const { date } = req.query;
-  const snaps = getUserSnapshots(req.userId).filter(s => s.snapshot_date !== date);
-  saveUserSnapshots(req.userId, snaps);
+  const snaps = getUserSnapshots(req.dataKey).filter(s => s.snapshot_date !== date);
+  saveUserSnapshots(req.dataKey, snaps);
   res.json({ ok: true });
 });
 
 // ═══════════════════════════════════════════
 //  Computed API（需要登录）
 // ═══════════════════════════════════════════
-app.get('/api/dates', authMiddleware, (req, res) => {
-  const snaps = getUserSnapshots(req.userId);
+app.get('/api/dates', authMiddleware, bookMiddleware, (req, res) => {
+  const snaps = getUserSnapshots(req.dataKey);
   res.json([...new Set(snaps.map(s => s.snapshot_date))].sort());
 });
 
-app.get('/api/latest-values', authMiddleware, (req, res) => {
-  const snaps = getUserSnapshots(req.userId);
+app.get('/api/latest-values', authMiddleware, bookMiddleware, (req, res) => {
+  const snaps = getUserSnapshots(req.dataKey);
   const latest = {};
   for (const s of snaps) {
     if (!latest[s.category_id] || s.snapshot_date > latest[s.category_id].date) {
@@ -300,22 +562,22 @@ app.get('/api/latest-values', authMiddleware, (req, res) => {
   res.json(result);
 });
 
-app.get('/api/table', authMiddleware, (req, res) => {
-  const snaps = getUserSnapshots(req.userId);
+app.get('/api/table', authMiddleware, bookMiddleware, (req, res) => {
+  const snaps = getUserSnapshots(req.dataKey);
   const data = {};
   for (const s of snaps) { if (!data[s.snapshot_date]) data[s.snapshot_date] = {}; data[s.snapshot_date][s.category_id] = s.value; }
   res.json(data);
 });
 
-app.get('/api/summary/latest', authMiddleware, (req, res) => {
-  const snaps = getUserSnapshots(req.userId);
+app.get('/api/summary/latest', authMiddleware, bookMiddleware, (req, res) => {
+  const snaps = getUserSnapshots(req.dataKey);
   if (snaps.length === 0) return res.json(null);
   const dates = [...new Set(snaps.map(s => s.snapshot_date))].sort();
-  res.json(buildSummary(req.userId, dates[dates.length - 1]));
+  res.json(buildSummary(req.dataKey, dates[dates.length - 1]));
 });
 
-app.get('/api/summary/:date', authMiddleware, (req, res) => {
-  res.json(buildSummary(req.userId, req.params.date));
+app.get('/api/summary/:date', authMiddleware, bookMiddleware, (req, res) => {
+  res.json(buildSummary(req.dataKey, req.params.date));
 });
 
 function buildSummary(userId, date) {
@@ -335,20 +597,20 @@ function buildSummary(userId, date) {
   return { date, totalAssets, totalLiabilities, netWorth: totalAssets - totalLiabilities, items };
 }
 
-app.get('/api/trend/total', authMiddleware, (req, res) => {
+app.get('/api/trend/total', authMiddleware, bookMiddleware, (req, res) => {
   const { start } = req.query;
-  const cats = getUserCategories(req.userId).filter(c => !c.is_deleted);
+  const cats = getUserCategories(req.dataKey).filter(c => !c.is_deleted);
   const catIds = new Set(cats.map(c => c.id));
-  const snaps = getUserSnapshots(req.userId).filter(s => catIds.has(s.category_id) && (!start || s.snapshot_date >= start));
+  const snaps = getUserSnapshots(req.dataKey).filter(s => catIds.has(s.category_id) && (!start || s.snapshot_date >= start));
   const byDate = {};
   for (const s of snaps) { byDate[s.snapshot_date] = (byDate[s.snapshot_date] || 0) + s.value; }
   res.json(Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0])).map(([d, v]) => ({ date: d, value: v })));
 });
 
-app.get('/api/trend/:categoryId', authMiddleware, (req, res) => {
+app.get('/api/trend/:categoryId', authMiddleware, bookMiddleware, (req, res) => {
   const catId = parseInt(req.params.categoryId);
   const { start } = req.query;
-  const snaps = getUserSnapshots(req.userId).filter(s => s.category_id === catId && (!start || s.snapshot_date >= start));
+  const snaps = getUserSnapshots(req.dataKey).filter(s => s.category_id === catId && (!start || s.snapshot_date >= start));
   res.json(snaps.sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date)).map(s => ({ date: s.snapshot_date, value: s.value })));
 });
 
@@ -357,9 +619,9 @@ app.get('/api/trend/:categoryId', authMiddleware, (req, res) => {
 // ═══════════════════════════════════════════
 const ASSET_COLORS = ['#1976D2','#E53935','#1565C0','#FF8F00','#43A047','#8E24AA','#00897B','#EF6C00','#5C6BC0','#D81B60','#00ACC1','#7CB342'];
 
-app.get('/api/export', authMiddleware, (req, res) => {
-  const cats = getUserCategories(req.userId).filter(c => !c.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-  const snaps = getUserSnapshots(req.userId);
+app.get('/api/export', authMiddleware, bookMiddleware, (req, res) => {
+  const cats = getUserCategories(req.dataKey).filter(c => !c.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const snaps = getUserSnapshots(req.dataKey);
   const dates = [...new Set(snaps.map(s => s.snapshot_date))].sort();
   if (cats.length === 0 || dates.length === 0) return res.status(400).json({ error: '没有数据可导出' });
   const tableData = {};
@@ -378,7 +640,7 @@ app.get('/api/export', authMiddleware, (req, res) => {
   res.send(csv);
 });
 
-app.post('/api/import', authMiddleware, upload.single('file'), (req, res) => {
+app.post('/api/import', authMiddleware, bookMiddleware, upload.single('file'), (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: '请上传文件' });
     let csvStr = req.file.buffer.toString('utf-8');
@@ -393,8 +655,8 @@ app.post('/api/import', authMiddleware, upload.single('file'), (req, res) => {
       if (parts.length !== 3) throw new Error(`日期格式错误: ${header[i]}`);
       dates.push(`${parts[0]}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}`);
     }
-    const cats = getUserCategories(req.userId);
-    const snaps = getUserSnapshots(req.userId);
+    const cats = getUserCategories(req.dataKey);
+    const snaps = getUserSnapshots(req.dataKey);
     const nameMap = Object.fromEntries(cats.filter(c => !c.is_deleted).map(c => [c.name, c.id]));
     let catsImported = 0, snapsImported = 0, colorIdx = cats.length;
     for (let li = 1; li < lines.length; li++) {
@@ -417,8 +679,8 @@ app.post('/api/import', authMiddleware, upload.single('file'), (req, res) => {
         snapsImported++;
       }
     }
-    saveUserCategories(req.userId, cats);
-    saveUserSnapshots(req.userId, snaps);
+    saveUserCategories(req.dataKey, cats);
+    saveUserSnapshots(req.dataKey, snaps);
     res.json({ categoriesImported: catsImported, snapshotsImported: snapsImported, categoriesSkipped: (lines.length - 1) - catsImported });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

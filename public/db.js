@@ -15,12 +15,24 @@ function getUser() { try { return JSON.parse(localStorage.getItem('jizhang_user'
 function setUser(user) { localStorage.setItem('jizhang_user', JSON.stringify(user)); }
 function clearUser() { localStorage.removeItem('jizhang_user'); }
 function isLoggedIn() { return !!getToken(); }
+function getActiveBookId() {
+  const v = localStorage.getItem('jizhang_active_book_id');
+  if (!v) return null;
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? null : n;
+}
+function setActiveBookId(id) {
+  if (!id) localStorage.removeItem('jizhang_active_book_id');
+  else localStorage.setItem('jizhang_active_book_id', String(id));
+}
 
 // ═══════ Helper ═══════
 async function api(path, options = {}) {
   const token = getToken();
+  const activeBookId = getActiveBookId();
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   if (token) headers['x-auth-token'] = token;
+  if (activeBookId) headers['x-book-id'] = String(activeBookId);
   const res = await fetch(path, { ...options, headers });
   if (res.status === 401) {
     clearToken(); clearUser();
@@ -50,6 +62,10 @@ async function registerUser(email, code, password) {
   const result = await api('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, code, password }) });
   setToken(result.token);
   setUser(result.user);
+  if (result.books?.length) {
+    const personal = result.books.find(b => b.type === 'personal') || result.books[0];
+    if (personal) setActiveBookId(personal.id);
+  }
   return result;
 }
 
@@ -57,6 +73,10 @@ async function loginUser(email, password) {
   const result = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
   setToken(result.token);
   setUser(result.user);
+  if (!getActiveBookId() && result.books?.length) {
+    const personal = result.books.find(b => b.type === 'personal') || result.books[0];
+    if (personal) setActiveBookId(personal.id);
+  }
   return result;
 }
 
@@ -71,6 +91,36 @@ async function getMe() {
 async function logout() {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
   clearToken(); clearUser();
+  setActiveBookId(null);
+}
+
+// ═══════ Book API ═══════
+async function getBooks() {
+  return api('/api/books');
+}
+
+async function createFamilyBook(name) {
+  return api('/api/books/family', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+async function inviteFamilyMember(bookId, email) {
+  return api('/api/books/family/invite', { method: 'POST', body: JSON.stringify({ bookId, email }) });
+}
+
+async function getPendingInvitations() {
+  return api('/api/books/invitations');
+}
+
+async function respondInvitation(invitationId, action) {
+  return api(`/api/books/invitations/${invitationId}/respond`, { method: 'POST', body: JSON.stringify({ action }) });
+}
+
+async function getInvitationByToken(token) {
+  return api(`/api/books/invitations/token/${encodeURIComponent(token)}`);
+}
+
+async function respondInvitationByToken(token, action) {
+  return api('/api/books/invitations/token/respond', { method: 'POST', body: JSON.stringify({ token, action }) });
 }
 
 // ═══════ Category CRUD ═══════
@@ -131,15 +181,21 @@ async function getCategoryTrend(categoryId, startDate = null) { return api(`/api
 // ═══════ CSV Import/Export ═══════
 async function exportToCsv() {
   const token = getToken();
-  const res = await fetch('/api/export', { headers: { 'x-auth-token': token } });
+  const activeBookId = getActiveBookId();
+  const headers = { 'x-auth-token': token };
+  if (activeBookId) headers['x-book-id'] = String(activeBookId);
+  const res = await fetch('/api/export', { headers });
   if (!res.ok) throw new Error('导出失败');
   return res.text();
 }
 async function importFromCsv(csvStr) {
   const token = getToken();
+  const activeBookId = getActiveBookId();
   const formData = new FormData();
   formData.append('file', new Blob([csvStr], { type: 'text/csv' }), 'import.csv');
-  const res = await fetch('/api/import', { method: 'POST', body: formData, headers: { 'x-auth-token': token } });
+  const headers = { 'x-auth-token': token };
+  if (activeBookId) headers['x-book-id'] = String(activeBookId);
+  const res = await fetch('/api/import', { method: 'POST', body: formData, headers });
   if (!res.ok) { const err = await res.json().catch(() => ({ error: '导入失败' })); throw new Error(err.error); }
   return res.json();
 }
