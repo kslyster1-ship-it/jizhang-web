@@ -268,6 +268,10 @@ async function renderHomePage(container) {
             <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="vertical-align:-3px;margin-right:4px"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>删除当天记录
           </button>
         </div>
+        ${homeSelectedDate !== todayStr() ? `
+        <button class="btn-outline" style="width:100%;font-size:13px;padding:10px;margin-top:10px" onclick="copyDateAsToday('${homeSelectedDate}')">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="vertical-align:-3px;margin-right:4px"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制为今天的记录
+        </button>` : ''}
         ` : '<div style="padding:20px 0;text-align:center;color:var(--text-tertiary);font-size:14px">该日期暂无记录</div>'}
       </div>
     </div>`;
@@ -898,6 +902,39 @@ async function openAddSnapshot(editDate) {
   const dateVals = Object.fromEntries(dateSnaps.map(s => [s.categoryId, s.value]));
 
   renderSnapshotModal(cats, latestVals, dateVals, editDate);
+}
+
+// 复制某一天的记录，作为「今天」的记录进行编辑（只改数字即可）
+async function copyDateAsToday(srcDate) {
+  const today = todayStr();
+  const srcSnaps = await getSnapshotsByDate(srcDate);
+  if (srcSnaps.length === 0) { showToast('该日期暂无记录', 'info'); return; }
+
+  const todaySnaps = await getSnapshotsByDate(today);
+  if (todaySnaps.length > 0) {
+    showDialog(`
+      <h3>今天已有记录</h3>
+      <p style="color:var(--text-secondary);font-size:14px;line-height:1.6">今天（<b>${fmtDateFull(today)}</b>）已经有记录了。<br>用 ${fmtDate(srcDate)} 的记录覆盖编辑吗？保存后会替换今天的数据。</p>
+      <div class="dialog-actions">
+        <button class="cancel" onclick="this.closest('.dialog-overlay').remove()">取消</button>
+        <button class="confirm" onclick="this.closest('.dialog-overlay').remove();doCopyDateAsToday('${srcDate}')">继续</button>
+      </div>`);
+    return;
+  }
+  doCopyDateAsToday(srcDate);
+}
+
+async function doCopyDateAsToday(srcDate) {
+  const today = todayStr();
+  const cats = await getAllCategories();
+  const latestVals = await getLatestValues();
+  const srcSnaps = await getSnapshotsByDate(srcDate);
+  const dateVals = Object.fromEntries(srcSnaps.map(s => [s.categoryId, s.value]));
+
+  snapDate = today;
+  snapShowAssets = true;
+  renderSnapshotModal(cats, latestVals, dateVals, today);
+  showToast(`已复制 ${fmtDate(srcDate)} 的记录，改完数字保存即可`, 'success');
 }
 
 function renderSnapshotModal(cats, latestVals, dateVals, editDate) {
